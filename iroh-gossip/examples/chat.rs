@@ -47,6 +47,8 @@ struct Args {
     /// Set the bind port for our socket. By default, a random port will be used.
     #[clap(short, long, default_value = "0")]
     bind_port: u16,
+    #[clap(short, long, default_value = "0")]
+    region_id: u16,
     #[clap(subcommand)]
     command: Command,
 }
@@ -96,7 +98,7 @@ async fn main() -> anyhow::Result<()> {
     // configure our derp map
     let derp_mode = match (args.no_derp, args.derp) {
         (false, None) => DerpMode::Default,
-        (false, Some(url)) => DerpMode::Custom(DerpMap::from_url(url, 0)),
+        (false, Some(url)) => DerpMode::Custom(DerpMap::from_url(url, args.region_id)),
         (true, None) => DerpMode::Disabled,
         (true, Some(_)) => bail!("You cannot set --no-derp and --derp at the same time"),
     };
@@ -157,13 +159,24 @@ async fn main() -> anyhow::Result<()> {
     if peers.is_empty() {
         println!("> waiting for peers to join us...");
     } else {
-        println!("> trying to connect to {} peers...", peers.len());
+        println!("> trying to connect to {} peers...{peers:?}", peers.len());
         // add the peer addrs from the ticket to our endpoint's addressbook so that they can be dialed
         for peer in peers.into_iter() {
             endpoint.add_peer_addr(peer)?;
         }
     };
-    gossip.join(topic, peer_ids).await?.await?;
+    println!("> join..");
+    let fut = gossip.join(topic, peer_ids).await?;
+    tokio::spawn(async move {
+        match tokio::time::timeout(tokio::time::Duration::from_secs(5), fut).await {
+            Ok(r) => {
+                println!("> join ok:{}!", r.is_ok());
+            }
+            Err(_e) => {
+                println!("> join timeout!");
+            }
+        }
+    });
     println!("> connected!");
 
     // broadcast our name, if set
@@ -184,10 +197,28 @@ async fn main() -> anyhow::Result<()> {
     // broadcast each line we type
     println!("> type a message and hit enter to broadcast...");
     while let Some(text) = line_rx.recv().await {
-        let message = Message::Message { text: text.clone() };
-        let encoded_message = SignedMessage::sign_and_encode(endpoint.secret_key(), &message)?;
-        gossip.broadcast(topic, encoded_message).await?;
-        println!("> sent: {text}");
+        let text = text.trim();
+        if text.trim() == "quit" {
+            gossip.quit(topic).await?;
+            println!("> quit");
+            break;
+        } else if text.trim() == "join" {
+            let ticket = {
+                let me = endpoint.my_addr().await?;
+                println!("> ticket to join me: {me:?}");
+                let peers = vec![me];
+                Ticket { topic, peers }
+            };
+            println!("> ticket to join us: {ticket}");
+        } else {
+            let message = Message::Message {
+                text: format!("{text}"),
+            };
+            let encoded_message = SignedMessage::sign_and_encode(endpoint.secret_key(), &message)?;
+            gossip.broadcast(topic, encoded_message).await?;
+            
+            println!("> sent: {text}[{}]",text.len());
+        }
     }
 
     Ok(())

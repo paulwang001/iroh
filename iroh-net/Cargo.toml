@@ -120,3 +120,4 @@ metrics = ["iroh-metrics/metrics"]
 [[bin]]
 name = "derper"
 required-features = ["derper"]
+

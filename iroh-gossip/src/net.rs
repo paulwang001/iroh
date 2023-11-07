@@ -554,7 +554,7 @@ impl Actor {
                         debug!(peer = ?node_id, "add known addrs: {info:?}");
                         let node_addr = NodeAddr { node_id, info };
                         if let Err(err) = self.endpoint.add_peer_addr(node_addr) {
-                            debug!(peer = ?node_id, "add known failed: {err:?}");
+                            warn!(peer = ?node_id, "add known failed: {err:?}");
                         }
                     }
                 },

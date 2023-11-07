@@ -342,7 +342,7 @@ pub fn init_metrics_collection(
 }
 
 /// Only used when in `dev` mode & the given port is `443`
-const DEV_PORT: u16 = 3340;
+const DEV_PORT: u16 = 8340;
 /// Only used when tls is enabled & a captive protal port is not given
 const DEFAULT_CAPTIVE_PORTAL_PORT: u16 = 80;
 

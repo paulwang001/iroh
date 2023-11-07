@@ -21,7 +21,7 @@ impl Commands {
                 let mut response = iroh.blobs.list().await?;
                 while let Some(item) = response.next().await {
                     let item = item?;
-                    println!("{} {} ({})", item.path, item.hash, HumanBytes(item.size),);
+                    println!("path:{} hash:{} ({})", item.path, item.hash, HumanBytes(item.size),);
                 }
             }
             Commands::IncompleteBlobs => {
