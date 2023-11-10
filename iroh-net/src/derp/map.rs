@@ -103,7 +103,7 @@ impl DerpMap {
             DerpRegion {
                 region_id,
                 nodes: vec![DerpNode {
-                    name: "default-1".into(),
+                    name: format!("DN-{region_id}"),
                     region_id,
                     url,
                     stun_only: !derp_ipv4.is_enabled() && !derp_ipv6.is_enabled(),
@@ -113,7 +113,7 @@ impl DerpMap {
                 }
                 .into()],
                 avoid: false,
-                region_code: "default".into(),
+                region_code: format!("DN-{region_id}"),
             },
         );
 

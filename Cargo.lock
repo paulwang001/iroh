@@ -668,6 +668,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "conhash"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "674f950b7e53509079db0355d63ae45c5a0e31c2b95eed21172d7b60d3ffaf8d"
+dependencies = [
+ "log",
+ "md5",
+]
+
+[[package]]
 name = "console"
 version = "0.15.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2139,6 +2149,33 @@ dependencies = [
 ]
 
 [[package]]
+name = "iroh-beacon"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "bytes",
+ "clap",
+ "conhash",
+ "data-encoding",
+ "derive_more",
+ "ed25519-dalek",
+ "futures",
+ "indexmap 2.0.2",
+ "iroh-gossip",
+ "iroh-metrics",
+ "iroh-net",
+ "once_cell",
+ "postcard",
+ "quinn",
+ "rand",
+ "rand_core",
+ "serde",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "iroh-blake3"
 version = "1.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2365,6 +2402,7 @@ dependencies = [
  "iroh-net",
  "iroh-test",
  "lru",
+ "num_enum",
  "once_cell",
  "ouroboros",
  "parking_lot",

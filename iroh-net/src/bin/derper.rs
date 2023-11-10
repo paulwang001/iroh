@@ -349,7 +349,11 @@ const DEFAULT_CAPTIVE_PORTAL_PORT: u16 = 80;
 #[tokio::main]
 async fn main() -> Result<()> {
     tracing_subscriber::registry()
-        .with(tracing_subscriber::fmt::layer().with_writer(std::io::stderr))
+        .with(
+            tracing_subscriber::fmt::layer()
+            .pretty()
+            .with_writer(std::io::stderr)
+        )
         .with(EnvFilter::from_default_env())
         .init();
 

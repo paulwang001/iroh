@@ -1,0 +1,5 @@
+RUST_LOG=warn nohup ./target/debug/examples/beacon --secret-key octnbev3ntvwwrtdv24komstculaww2f2ijfp5ihqi7urxzxe4ha -n N01 -t xxe2y5dilfr6rxubk5bpbynhwjdkw6iqdmagrcueeslqhdkrcn7acigtu5nv2utevk2b7r5oq724tac6svk7vbukzp7qxtmq2yejx24ib4aqeaqap4aaaamgr4babqfi5lrindyc > ./target/B01.log 2>&1 &
+sleep 2s
+RUST_LOG=warn nohup ./target/debug/examples/beacon --secret-key nulky54ng4n6zlf6sxid5thyu2osqhipdiyu3xu6oek5br7nwgfa -n N02 -t xxe2y5dilfr6rxubk5bpbynhwjdkw6iqdmagrcueeslqhdkrcn7acigtu5nv2utevk2b7r5oq724tac6svk7vbukzp7qxtmq2yejx24ib4aqeaqap4aaaamgr4babqfi5lrindyc > ./target/B02.log 2>&1 &
+sleep 2s
+RUST_LOG=warn nohup ./target/debug/examples/beacon --secret-key xcweyvdctbflkigarxyvfewzb3ne2ooty2wbfi6k7bzdv3yfr4ja -n N02 -t xxe2y5dilfr6rxubk5bpbynhwjdkw6iqdmagrcueeslqhdkrcn7acigtu5nv2utevk2b7r5oq724tac6svk7vbukzp7qxtmq2yejx24ib4aqeaqap4aaaamgr4babqfi5lrindyc > ./target/B03.log 2>&1 &

@@ -131,7 +131,7 @@ impl Gossip {
     ///
     ///
     /// This method only asks for [`PublicKey`]s. You must supply information on how to
-    /// connect to these peers manually before, by calling [`MagicEndpoint::add_peer_addr`] on
+    /// connect to these peers manually before, by calling [`MagicEndpoint::add_node_addr`] on
     /// the underlying [`MagicEndpoint`].
     ///
     /// This method returns a future that completes once the request reached the local actor.
@@ -363,7 +363,7 @@ impl Actor {
                     match msg {
                         Some(msg) => self.handle_to_actor_msg(msg, Instant::now()).await?,
                         None => {
-                            debug!("all gossip handles dropped, stop gossip actor");
+                            tracing::error!("all gossip handles dropped, stop gossip actor");
                             break;
                         }
                     }
@@ -428,13 +428,13 @@ impl Actor {
                 let in_event_tx = self.in_event_tx.clone();
                 tokio::spawn(
                     async move {
-                        debug!("connection established");
+                        warn!("connection established");
                         match connection_loop(peer_id, conn, origin, send_rx, &in_event_tx).await {
                             Ok(()) => {
                                 debug!("connection closed without error")
                             }
                             Err(err) => {
-                                debug!("connection closed with error {err:?}")
+                                tracing::error!("connection closed with error {err:?}")
                             }
                         }
                         in_event_tx
@@ -460,9 +460,12 @@ impl Actor {
                     reply.send(Ok(topic_id)).ok();
                 } else {
                     // Otherwise, wait for any peer to come up as neighbor.
+                    warn!("Join sub...");
                     let sub = self.subscribe(topic_id);
                     tokio::spawn(async move {
+                        warn!("wait_for_neighbor_up...");
                         let res = wait_for_neighbor_up(sub).await;
+                        warn!("wait_for_neighbor_up ok");
                         let res = res.map(|_| topic_id);
                         reply.send(res).ok();
                     });
@@ -553,7 +556,7 @@ impl Actor {
                     Ok(info) => {
                         debug!(peer = ?node_id, "add known addrs: {info:?}");
                         let node_addr = NodeAddr { node_id, info };
-                        if let Err(err) = self.endpoint.add_peer_addr(node_addr) {
+                        if let Err(err) = self.endpoint.add_node_addr(node_addr) {
                             warn!(peer = ?node_id, "add known failed: {err:?}");
                         }
                     }
@@ -730,8 +733,8 @@ mod test {
         let topic: TopicId = blake3::hash(b"foobar").into();
         // share info that pi1 is on the same derp_region
         let addr1 = NodeAddr::new(pi1).with_derp_region(derp_region);
-        ep2.add_peer_addr(addr1.clone()).unwrap();
-        ep3.add_peer_addr(addr1).unwrap();
+        ep2.add_node_addr(addr1.clone()).unwrap();
+        ep3.add_node_addr(addr1).unwrap();
 
         debug!("----- joining  ----- ");
         // join the topics and wait for the connection to succeed

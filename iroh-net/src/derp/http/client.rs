@@ -518,19 +518,21 @@ impl Client {
         // connect to the remote server & request to watching the remote's state changes
         let own_key = self.public_key();
         loop {
+            warn!("connected watch....");
             let (server_public_key, last_conn_gen) = match self.watch_connection_changes().await {
                 Ok(key) => {
                     if let Some(ref sender) = mesh_events {
                         if let Err(e) = sender.send(MeshClientEvent::Meshed).await {
-                            bail!("unable to notify sender that we have successfully meshed with the remote server: {e:?}");
+                            tracing::error!("unable to notify sender that we have successfully meshed with the remote server: {e:?}");
                         }
                     }
+                    warn!("connected to derp server {key:?}");
                     key
                 }
                 Err(e) => {
                     warn!("error connecting to derp server {e}");
                     tokio::time::sleep(MESH_CLIENT_REDIAL_DELAY).await;
-                    continue;
+                    return Err(e.into());
                 }
             };
 
@@ -539,7 +541,7 @@ impl Client {
             }
 
             let peers_present = PeersPresent::new(server_public_key);
-            info!("Connected to mesh derp server {server_public_key:?}");
+            warn!("Connected to mesh derp server {server_public_key:?}");
 
             // receive detail loop
             loop {

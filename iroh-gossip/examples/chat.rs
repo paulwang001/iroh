@@ -9,7 +9,7 @@ use iroh_gossip::{
     proto::{util::base32, Event, TopicId},
 };
 use iroh_net::{
-    derp::{DerpMap, DerpMode},
+    derp::{DerpMap, DerpMode, DerpNode, DerpRegion, UseIpv4, UseIpv6},
     key::{PublicKey, SecretKey},
     magic_endpoint::accept_conn,
     MagicEndpoint, NodeAddr,
@@ -69,8 +69,55 @@ enum Command {
     },
 }
 
+/// Get the default [`DerpMap`].
+pub fn default_derp_map() -> DerpMap {
+    DerpMap::from_regions([default_na_derp_region(), default_eu_derp_region()])
+        .expect("default regions invalid")
+}
+
+/// Get the default [`DerpRegion`] for NA.
+pub fn default_na_derp_region() -> DerpRegion {
+    // The default NA derper run by number0.
+    let default_n0_derp = DerpNode {
+        name: "na-default-1".into(),
+        region_id: 1,
+        url: format!("http://localhost:8443").parse().unwrap(),
+        stun_only: false,
+        stun_port: 3478,
+        ipv4: UseIpv4::TryDns,
+        ipv6: UseIpv6::TryDns,
+    };
+    DerpRegion {
+        region_id: 1,
+        nodes: vec![default_n0_derp.into()],
+        avoid: false,
+        region_code: "default-1".into(),
+    }
+}
+
+/// Get the default [`DerpRegion`] for EU.
+pub fn default_eu_derp_region() -> DerpRegion {
+    // The default EU derper run by number0.
+    let default_n0_derp = DerpNode {
+        name: "eu-default-1".into(),
+        region_id: 2,
+        url: format!("http://localhost:7443").parse().unwrap(),
+        stun_only: false,
+        stun_port: 4478,
+        ipv4: UseIpv4::TryDns,
+        ipv6: UseIpv6::TryDns,
+    };
+    DerpRegion {
+        region_id: 2,
+        nodes: vec![default_n0_derp.into()],
+        avoid: false,
+        region_code: "default-2".into(),
+    }
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    // tracing_subscriber::fmt::fmt().pretty().init();
     tracing_subscriber::fmt::init();
     let args = Args::parse();
 
@@ -97,7 +144,7 @@ async fn main() -> anyhow::Result<()> {
 
     // configure our derp map
     let derp_mode = match (args.no_derp, args.derp) {
-        (false, None) => DerpMode::Default,
+        (false, None) => DerpMode::Custom(default_derp_map()),
         (false, Some(url)) => DerpMode::Custom(DerpMap::from_url(url, args.region_id)),
         (true, None) => DerpMode::Disabled,
         (true, Some(_)) => bail!("You cannot set --no-derp and --derp at the same time"),
@@ -120,6 +167,7 @@ async fn main() -> anyhow::Result<()> {
             let notify = notify.clone();
             Box::new(move |endpoints| {
                 if endpoints.is_empty() {
+                    eprintln!("endpoints is empty!");
                     return;
                 }
                 // send our updated endpoints to the gossip protocol to be sent as NodeAddr to peers
@@ -154,40 +202,61 @@ async fn main() -> anyhow::Result<()> {
     // spawn our endpoint loop that forwards incoming connections to the gossiper
     tokio::spawn(endpoint_loop(endpoint.clone(), gossip.clone()));
 
+    // subscribe and print loop
+    let go = gossip.clone();
+    let name = args.name.clone();
+    let key = endpoint.secret_key().clone();
+    tokio::spawn(async move {
+        loop {
+            if let Err(e) = subscribe_loop(go.clone(), topic, name.clone(), &key).await {
+                eprintln!("sub>>{e:?}");
+                tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
+            }
+        }
+    });
+
     // join the gossip topic by connecting to known peers, if any
-    let peer_ids = peers.iter().map(|p| p.node_id).collect();
+    let peer_ids = peers.iter().map(|p| p.node_id).collect::<Vec<_>>();
     if peers.is_empty() {
         println!("> waiting for peers to join us...");
     } else {
         println!("> trying to connect to {} peers...{peers:?}", peers.len());
         // add the peer addrs from the ticket to our endpoint's addressbook so that they can be dialed
         for peer in peers.into_iter() {
-            endpoint.add_peer_addr(peer)?;
+            endpoint.add_node_addr(peer)?;
         }
     };
+
     println!("> join..");
-    let fut = gossip.join(topic, peer_ids).await?;
+    let go = gossip.clone();
+    let key = endpoint.secret_key().clone();
     tokio::spawn(async move {
-        match tokio::time::timeout(tokio::time::Duration::from_secs(5), fut).await {
-            Ok(r) => {
-                println!("> join ok:{}!", r.is_ok());
-            }
-            Err(_e) => {
-                println!("> join timeout!");
+        loop {
+            let fut = go.join(topic, peer_ids.clone()).await.unwrap();
+            match tokio::time::timeout(tokio::time::Duration::from_secs(6), fut).await {
+                Ok(r) => {
+                    println!("> join ok:{}!", r.is_ok());
+                    // broadcast our name, if set
+                    if let Some(name) = args.name {
+                        let message = Message::AboutMe { name };
+                        let encoded_message = SignedMessage::sign_and_encode(&key, &message).unwrap();
+                        if let Err(e) = go.broadcast(topic, encoded_message).await {
+                            eprintln!("go about>>>{e:?}");
+                        }
+                    }
+                    break;
+                }
+                Err(_e) => {
+                    println!("> join timeout!");
+                }
             }
         }
     });
     println!("> connected!");
 
-    // broadcast our name, if set
-    if let Some(name) = args.name {
-        let message = Message::AboutMe { name };
-        let encoded_message = SignedMessage::sign_and_encode(endpoint.secret_key(), &message)?;
-        gossip.broadcast(topic, encoded_message).await?;
-    }
+    
 
-    // subscribe and print loop
-    tokio::spawn(subscribe_loop(gossip.clone(), topic));
+    
 
     // spawn an input thread that reads stdin
     // not using tokio here because they recommend this for "technical reasons"
@@ -224,26 +293,46 @@ async fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn subscribe_loop(gossip: Gossip, topic: TopicId) -> anyhow::Result<()> {
+async fn subscribe_loop(
+    gossip: Gossip,
+    topic: TopicId,
+    name: Option<String>,
+    key: &SecretKey,
+) -> anyhow::Result<()> {
     // init a peerid -> name hashmap
     let mut names = HashMap::new();
     // get a stream that emits updates on our topic
     let mut stream = gossip.subscribe(topic).await?;
     loop {
         let event = stream.recv().await?;
-        if let Event::Received(msg) = event {
-            let (from, message) = SignedMessage::verify_and_decode(&msg.content)?;
-            match message {
-                Message::AboutMe { name } => {
-                    names.insert(from, name.clone());
-                    println!("> {} is now known as {}", fmt_peer_id(&from), name);
+        match event {
+            Event::Received(msg) => {
+                let (from, message) = SignedMessage::verify_and_decode(&msg.content)?;
+                match message {
+                    Message::AboutMe { name } => {
+                        names.insert(from, name.clone());
+                        println!("> {} is now known as {}", fmt_peer_id(&from), name);
+                    }
+                    Message::Message { text } => {
+                        let name = names
+                            .get(&from)
+                            .map_or_else(|| fmt_peer_id(&from), String::to_string);
+                        println!("{}: {}", name, text);
+                    }
                 }
-                Message::Message { text } => {
-                    let name = names
-                        .get(&from)
-                        .map_or_else(|| fmt_peer_id(&from), String::to_string);
-                    println!("{}: {}", name, text);
+            }
+            Event::NeighborUp(p) => {
+                if let Some(name) = name.clone() {
+                    let message = Message::AboutMe { name };
+                    let encoded_message = SignedMessage::sign_and_encode(&key, &message).unwrap();
+                    if let Err(e) = gossip.broadcast(topic, encoded_message).await {
+                        eprintln!("go about>>>{e:?}");
+                    }
                 }
+                eprintln!(">>>>>NeighborUp: {p:?}");
+            }
+            Event::NeighborDown(p) => {
+                eprintln!(">>>>>NeighborDown: {p:?}");
             }
         }
     }

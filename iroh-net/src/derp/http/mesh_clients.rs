@@ -63,25 +63,28 @@ impl MeshClients {
         };
         let mut meshed_once_recvs = Vec::new();
         for addr in addrs {
-            let (client, client_receiver) = ClientBuilder::new()
-                .mesh_key(Some(self.mesh_key))
-                .server_url(addr)
-                .build(self.server_key.clone())
-                .expect("will only fail if no `server_url` is present");
-
-            let packet_forwarder_handler = self.packet_fwd.clone();
             let (sender, recv) = tokio::sync::mpsc::channel(32);
-            self.tasks.spawn(
-                async move {
+            let mesh_key = self.mesh_key.clone();
+            let server_key = self.server_key.clone();
+            let addr = addr.clone();
+            let sender_t = sender.clone();
+            let packet_forwarder_handler = self.packet_fwd.clone();
+            self.tasks.spawn(async move {
+                loop {
+                    let (client, client_receiver) = ClientBuilder::new()
+                        .mesh_key(Some(mesh_key.clone()))
+                        .server_url(addr.clone())
+                        .build(server_key.clone())
+                        .expect("will only fail if no `server_url` is present");
                     if let Err(e) = client
-                        .run_mesh_client(packet_forwarder_handler, Some(sender), client_receiver)
+                        .run_mesh_client(packet_forwarder_handler.clone(), Some(sender_t.clone()), client_receiver)
                         .await
                     {
                         tracing::warn!("{e:?}");
+                        tokio::time::sleep(std::time::Duration::from_secs(2)).await;
                     }
                 }
-                .instrument(info_span!("mesh-client")),
-            );
+            });
             meshed_once_recvs.push(recv);
         }
         Ok(meshed_once_recvs)

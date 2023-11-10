@@ -1,0 +1,11 @@
+secret_key = "sbwpqktwctsclwo73lususfsbhv3skrpdfv4k7kobs4fsretkkyq"
+addr = "0.0.0.0:7443"
+stun_port = 4478
+hostname = "localhost"
+enable_stun = true
+enable_derp = true
+[mesh]
+mesh_psk_file = "./mesh_key_1"
+mesh_with = [
+    "http://localhost:8443"
+]
