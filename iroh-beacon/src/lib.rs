@@ -73,6 +73,8 @@ impl SignedMessage {
 pub enum Message {
     Ready { node_addr: NodeAddr },
     AboutMe { name: String },
+    BadRelay { keys: Vec<PublicKey> },
+    RelayPing { key: PublicKey },
     Message { text: String },
     Election { epoch: u64, phase: ElectionPhase },
 }
@@ -163,9 +165,12 @@ pub async fn run(
         Ticket { topic, peers }
     };
     println!("> ticket to join beacon: {ticket}");
-
+    let relay_nodes = Arc::new(RwLock::new(
+        HashMap::<PublicKey, tokio::time::Instant>::new(),
+    ));
+    let relay_nodes_t = relay_nodes.clone();
     // spawn our endpoint loop that forwards incoming connections to the gossiper
-    tokio::spawn(endpoint_loop(endpoint.clone(), gossip.clone()));
+    tokio::spawn(endpoint_loop(endpoint.clone(), gossip.clone(),relay_nodes_t,topic));
 
     let peer_ids = peers.iter().map(|p| p.node_id).collect::<Vec<_>>();
     if peers.is_empty() {
@@ -188,9 +193,10 @@ pub async fn run(
     let go = gossip.clone();
     let key = endpoint.secret_key().clone();
     let boots_t = boots.clone();
+    let relay_nodes_t = relay_nodes.clone();
     tokio::spawn(async move {
         loop {
-            if let Err(e) = subscribe_loop(go.clone(), topic, &key, boots_t.clone()).await {
+            if let Err(e) = subscribe_loop(go.clone(), topic, &key, boots_t.clone(),relay_nodes_t.clone()).await {
                 eprintln!("sub>>{e:?}");
                 tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
             }
@@ -241,6 +247,7 @@ async fn subscribe_loop(
     topic: TopicId,
     key: &SecretKey,
     boots: Arc<tokio::sync::RwLock<HashMap<PublicKey, Option<Vec<u8>>>>>,
+    relays: Arc<RwLock<HashMap<PublicKey, tokio::time::Instant>>>,
 ) -> anyhow::Result<()> {
     // init a peerid -> name hashmap
     // get a stream that emits updates on our topic
@@ -257,6 +264,19 @@ async fn subscribe_loop(
                 match message {
                     Message::AboutMe { name } => {
                         println!("> {} is now known as {}", fmt_peer_id(&from), name);
+                    }
+                    Message::RelayPing { key }=>{
+                        let mut w = relays.write().await;
+                        if let Some(t) = w.get_mut(&key) {
+                            *t= tokio::time::Instant::now();
+                        }
+                        w.retain(|_p,t| t.elapsed().as_secs() < 40);
+                    }
+                    Message::BadRelay { keys }=>{
+                        let mut w = relays.write().await;
+                        for key in keys {
+                            w.remove(&key);
+                        }
                     }
                     Message::Ready { node_addr } => {
                         let p = node_addr.node_id;
@@ -289,7 +309,7 @@ async fn subscribe_loop(
                             println!("boots:{ticket}");
                         }
                         println!("{final_epoch}>> {}", text);
-                        if epoch_timer.elapsed().as_millis() > 10 * 1000 {
+                        if epoch_timer.elapsed().as_millis() > 30 * 1000 {
                             let ret = elect(
                                 gossip.clone(),
                                 topic,
@@ -507,13 +527,19 @@ async fn elect(
     Ok(mm)
 }
 
-async fn endpoint_loop(endpoint: MagicEndpoint, gossip: Gossip) {
-    let relay_nodes = Arc::new(RwLock::new(HashSet::<PublicKey>::new()));
+async fn endpoint_loop(
+    endpoint: MagicEndpoint,
+    gossip: Gossip,
+    relay_nodes: Arc<RwLock<HashMap<PublicKey, tokio::time::Instant>>>,
+    topic: TopicId,
+) {
     while let Some(conn) = endpoint.accept().await {
         let gossip = gossip.clone();
         let nodes = relay_nodes.clone();
+        let key = endpoint.secret_key().clone();
+
         tokio::spawn(async move {
-            if let Err(err) = handle_connection(conn, gossip, nodes).await {
+            if let Err(err) = handle_connection(conn, gossip, nodes,&key,topic).await {
                 println!("> connection closed: {err}");
             }
         });
@@ -522,7 +548,9 @@ async fn endpoint_loop(endpoint: MagicEndpoint, gossip: Gossip) {
 async fn handle_connection(
     conn: quinn::Connecting,
     gossip: Gossip,
-    relay_peers: Arc<RwLock<HashSet<PublicKey>>>,
+    relay_peers: Arc<RwLock<HashMap<PublicKey, tokio::time::Instant>>>,
+    secret_key: &SecretKey,
+    topic: TopicId,
 ) -> anyhow::Result<()> {
     let (peer_id, alpn, conn) = accept_conn(conn).await?;
 
@@ -536,15 +564,20 @@ async fn handle_connection(
             let req = recv.read_to_end(4096).await.context("recv failed")?;
             {
                 let mut peers = relay_peers.write().await;
-                peers.insert(peer_id);
+                peers.insert(peer_id,tokio::time::Instant::now());
             }
             match postcard::from_bytes::<BeaconRequest>(&req)? {
                 BeaconRequest::Ring(key, bads) => {
                     println!("relay req:");
                     if !bads.is_empty() {
-                        let mut peers = relay_peers.write().await;
-                        for b in bads {
-                            peers.remove(&b);
+                        let message = Message::BadRelay { keys: bads.clone() };
+                        let encoded_message = SignedMessage::sign_and_encode(secret_key, &message).unwrap();
+                        gossip.broadcast(topic, encoded_message).await?;
+                        {
+                            let mut peers = relay_peers.write().await;
+                            for b in bads {
+                                peers.remove(&b);
+                            }
                         }
                     }
                     let mut hash = ConsistentHash::new();
@@ -557,7 +590,7 @@ async fn handle_connection(
                             send.finish().await?;
                             return Ok(());
                         }
-                        peers.iter().for_each(|p| {
+                        peers.iter().for_each(|(p,_t)| {
                             if p != &key {
                                 hash.add(&BeaconNode::new(p.clone()), 32);
                             }
@@ -571,6 +604,11 @@ async fn handle_connection(
                         if let Some(second) = hash.get(key.as_bytes()) {
                             peers.push(NodeAddr::from_parts(second.key, None, vec![]));
                         }
+                    }
+                    if !peers.is_empty() {
+                        let message = Message::RelayPing { key: peer_id };
+                        let encoded_message = SignedMessage::sign_and_encode(secret_key, &message).unwrap();
+                        gossip.broadcast(topic, encoded_message).await?;
                     }
                     let rsp = BeaconResponse::Ring { nodes: peers };
                     let buf = postcard::to_stdvec(&rsp)?;

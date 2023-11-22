@@ -268,9 +268,9 @@ async fn main() -> anyhow::Result<()> {
                             while let Ok(Some(x)) = recv.read_chunk(4096, true).await {
                                 total += x.bytes.len();
                             }
-                            warn!("recv: {total} Byte");
+                            warn!("recv: {total} Byte from:{node_id}");
                         });
-                        for x in 1..10u8 {
+                        for x in 0..10u8 {
                             let data = vec![x; 32];
                             // warn!("send: {} Byte", data.len());
                             send.write_chunk(bytes::Bytes::from(data)).await?;
@@ -292,19 +292,19 @@ async fn main() -> anyhow::Result<()> {
         }
         Ok::<_, anyhow::Error>(())
     });
+    tokio::signal::ctrl_c().await?;
+    // let (line_tx, mut line_rx) = tokio::sync::mpsc::channel(1);
+    // std::thread::spawn(move || input_loop(line_tx));
+    // let name = args.name.unwrap_or_default();
+    // println!("> type a message and hit enter to ring...");
+    // while let Some(text) = line_rx.recv().await {
+    //     if text.len() > 1 {
+    //         let text = format!("{name}:{}", text.trim());
 
-    let (line_tx, mut line_rx) = tokio::sync::mpsc::channel(1);
-    std::thread::spawn(move || input_loop(line_tx));
-    let name = args.name.unwrap_or_default();
-    println!("> type a message and hit enter to ring...");
-    while let Some(text) = line_rx.recv().await {
-        if text.len() > 1 {
-            let text = format!("{name}:{}", text.trim());
-
-            println!("{text}");
-            tx2.send(text)?;
-        }
-    }
+    //         println!("{text}");
+    //         tx2.send(text)?;
+    //     }
+    // }
     Ok(())
 }
 

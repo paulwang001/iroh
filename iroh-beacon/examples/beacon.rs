@@ -122,23 +122,24 @@ async fn main() -> anyhow::Result<()> {
     tokio::spawn(async move {
         let mut x = 0_u64;
         loop {
-            tokio::time::sleep(std::time::Duration::from_secs(6)).await;
+            tokio::time::sleep(std::time::Duration::from_secs(30)).await;
             x += 1;
             line.send(format!("[{name}]: Hello {x}")).await?;
         }
         Ok::<_, anyhow::Error>(())
     });
-    std::thread::spawn(move || input_loop(line_tx));
-    println!("> type a message and hit enter to broadcast...");
-    while let Some(text) = line_rx.recv().await {
-        if text.len() > 1 {
-            let text = format!("{}", text.trim());
-            let msg = Message::Message { text };
-            let encoded_message = SignedMessage::sign_and_encode(&secret_key, &msg).unwrap();
-            go.broadcast(topic, encoded_message).await?;
-        }
-        // println!("{text}");
-    }
+    tokio::signal::ctrl_c().await?;
+    // std::thread::spawn(move || input_loop(line_tx));
+    // println!("> type a message and hit enter to broadcast...");
+    // while let Some(text) = line_rx.recv().await {
+    //     if text.len() > 1 {
+    //         let text = format!("{}", text.trim());
+    //         let msg = Message::Message { text };
+    //         let encoded_message = SignedMessage::sign_and_encode(&secret_key, &msg).unwrap();
+    //         go.broadcast(topic, encoded_message).await?;
+    //     }
+    //     // println!("{text}");
+    // }
     Ok(())
 }
 
